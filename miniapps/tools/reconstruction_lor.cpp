@@ -42,9 +42,9 @@ int main(int argc, char *argv[])
 {
    // Parse command-line options.
    const char *mesh_file = "../../data/star.mesh";
-   int order = 3;
-   int lref = order+1;
-   int lorder = 0;
+   int order_im = 3;
+   int lref = order_im+1; // 4
+   int order_lo = 0;
    bool vis = true;
    bool useH1 = false;
    int visport = 19916;
@@ -57,11 +57,11 @@ int main(int argc, char *argv[])
                   "Mesh file to use.");
    args.AddOption(&problem, "-p", "--problem",
                   "Problem type (see the RHO_exact function).");
-   args.AddOption(&order, "-o", "--order",
+   args.AddOption(&order_im, "-o", "--order",
                   "Finite element order (polynomial degree) or -1 for"
                   " isoparametric space.");
    args.AddOption(&lref, "-lref", "--lor-ref-level", "LOR refinement level.");
-   args.AddOption(&lorder, "-lo", "--lor-order",
+   args.AddOption(&order_lo, "-lo", "--lor-order",
                   "LOR space order (polynomial degree, zero by default).");
    args.AddOption(&vis, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
@@ -80,9 +80,7 @@ int main(int argc, char *argv[])
    // Configure device
    Device device(device_config);
 
-   // Read the mesh from the given mesh file.
-//    Mesh mesh(mesh_file, 1, 1);
-
+   // Create the intermediate mesh
    const int num_x = 2;
    const int num_y = 2;
    Mesh mesh_im = Mesh::MakeCartesian2D(num_x, num_y, Element::QUADRILATERAL, false, 1.0, 1.0 ); // sx = sy =1
@@ -91,53 +89,56 @@ int main(int argc, char *argv[])
    // Create the low-order refined mesh
    Mesh mesh_lo = Mesh::MakeRefined(mesh_im, lref, BasisType::GaussLobatto);
 
+   // Create the high-order mesh
+   Mesh mesh_hi(mesh_lo);
+
    // Create spaces
-   FiniteElementCollection *fec, *fec_lor;
+   FiniteElementCollection *fec_im, *fec_lo;
    space = "L2";
-   fec = new L2_FECollection(order, dim);
-   fec_lor = new L2_FECollection(lorder, dim);
+   fec_im = new L2_FECollection(order_im, dim);
+   fec_lo = new L2_FECollection(order_lo, dim);
 
-   FiniteElementSpace fespace(&mesh_im, fec);
-   FiniteElementSpace fespace_lor(&mesh_lo, fec_lor);
+   FiniteElementSpace fespace_im(&mesh_im, fec_im);
+   FiniteElementSpace fespace_lo(&mesh_lo, fec_lo);
 
-   GridFunction rho(&fespace);
-   GridFunction rho_lor(&fespace_lor);
+   GridFunction rho_im(&fespace_im);
+   GridFunction rho_lo(&fespace_lo);
 
    // Data collections for vis/analysis
    VisItDataCollection HO_dc("HO", &mesh_im);
-   HO_dc.RegisterField("density", &rho);
+   HO_dc.RegisterField("density", &rho_im);
    VisItDataCollection LOR_dc("LOR", &mesh_lo);
-   LOR_dc.RegisterField("density", &rho_lor);
+   LOR_dc.RegisterField("density", &rho_lo);
 
-   BilinearForm M_ho(&fespace);
+   BilinearForm M_ho(&fespace_im);
    M_ho.AddDomainIntegrator(new MassIntegrator);
    M_ho.Assemble();
    M_ho.Finalize();
 
-   BilinearForm M_lor(&fespace_lor);
-   M_lor.AddDomainIntegrator(new MassIntegrator);
-   M_lor.Assemble();
-   M_lor.Finalize();
+   BilinearForm M_lo(&fespace_lo);
+   M_lo.AddDomainIntegrator(new MassIntegrator);
+   M_lo.Assemble();
+   M_lo.Finalize();
 
    // HO projections
    direction = "HO -> LOR @ HO";
    FunctionCoefficient RHO(RHO_exact);
-   rho.ProjectCoefficient(RHO);
+   rho_im.ProjectCoefficient(RHO);
    // Make sure AMR constraints are satisfied
-   rho.SetTrueVector();
-   rho.SetFromTrueVector();
+   rho_im.SetTrueVector();
+   rho_im.SetFromTrueVector();
 
-   real_t ho_mass = compute_mass(&fespace, -1.0, HO_dc, "HO       ");
+   real_t ho_mass = compute_mass(&fespace_im, -1.0, HO_dc, "HO       ");
    if (vis) { visualize(HO_dc, "HO", Wx, Wy, visport); Wx += offx; }
 
    GridTransfer *gt;
    if (use_pointwise_transfer)
    {
-      gt = new InterpolationGridTransfer(fespace, fespace_lor);
+      gt = new InterpolationGridTransfer(fespace_im, fespace_lo);
    }
    else
    {
-      gt = new L2ProjectionGridTransfer(fespace, fespace_lor); // (dom_fes_, ran_fes_)
+      gt = new L2ProjectionGridTransfer(fespace_im, fespace_lo); // (dom_fes_, ran_fes_)
    }
 
    // Configure element assembly for device acceleration
@@ -148,9 +149,9 @@ int main(int argc, char *argv[])
    // HO->LOR restriction
    direction = "HO -> LOR @ LOR";
 
-   R.Mult(rho, rho_lor);
+   R.Mult(rho_im, rho_lo);
   
-   compute_mass(&fespace_lor, ho_mass, LOR_dc, "R(HO)    ");
+   compute_mass(&fespace_lo, ho_mass, LOR_dc, "R(HO)    ");
    if (vis) { visualize(LOR_dc, "R(HO)", Wx, Wy, visport); Wx += offx; }
 
    if (gt->SupportsBackwardsOperator()) // 1
@@ -158,31 +159,31 @@ int main(int argc, char *argv[])
       const Operator &P = gt->BackwardOperator(); // Prolongation
       // LOR->HO prolongation
       direction = "HO -> LOR @ HO";
-      GridFunction rho_prev = rho;
-      P.Mult(rho_lor, rho);
-      compute_mass(&fespace, ho_mass, HO_dc, "P(R(HO)) ");
+      GridFunction rho_prev = rho_im;
+      P.Mult(rho_lo, rho_im);
+      compute_mass(&fespace_im, ho_mass, HO_dc, "P(R(HO)) ");
       if (vis) { visualize(HO_dc, "P(R(HO))", Wx, Wy, visport); Wx = 0; Wy += offy; }
 
-      rho_prev -= rho;
+      rho_prev -= rho_im;
       cout.precision(12);
       cout << "|HO - P(R(HO))|_∞   = " << rho_prev.Normlinf() << endl;
    }
 
    // HO* to LOR* dual fields
-   LinearForm M_rho(&fespace), M_rho_lor(&fespace_lor);
+   LinearForm M_rho(&fespace_im), M_rho_lo(&fespace_lo);
    if (!use_pointwise_transfer && gt->SupportsBackwardsOperator())
    {
       const Operator &P = gt->BackwardOperator();
-      M_ho.Mult(rho, M_rho);
-      P.MultTranspose(M_rho, M_rho_lor);
-      cout << "HO -> LOR dual field: " << abs(M_rho.Sum()-M_rho_lor.Sum()) << "\n\n";
+      M_ho.Mult(rho_im, M_rho);
+      P.MultTranspose(M_rho, M_rho_lo);
+      cout << "HO -> LOR dual field: " << abs(M_rho.Sum()-M_rho_lo.Sum()) << "\n\n";
    }
 
    // LOR projections
    direction = "LOR -> HO @ LOR";
-   rho_lor.ProjectCoefficient(RHO);
-   GridFunction rho_lor_prev = rho_lor;
-   real_t lor_mass = compute_mass(&fespace_lor, -1.0, LOR_dc, "LOR      ");
+   rho_lo.ProjectCoefficient(RHO);
+   GridFunction rho_lo_prev = rho_lo;
+   real_t lor_mass = compute_mass(&fespace_lo, -1.0, LOR_dc, "LOR      ");
    if (vis) { visualize(LOR_dc, "LOR", Wx, Wy, visport); Wx += offx; }
 
    if (gt->SupportsBackwardsOperator())
@@ -190,33 +191,36 @@ int main(int argc, char *argv[])
       const Operator &P = gt->BackwardOperator();
       // Prolongate to HO space
       direction = "LOR -> HO @ HO";
-      P.Mult(rho_lor, rho);
-      compute_mass(&fespace, lor_mass, HO_dc, "P(LOR)   ");
+      P.Mult(rho_lo, rho_im);
+      compute_mass(&fespace_im, lor_mass, HO_dc, "P(LOR)   ");
       if (vis) { visualize(HO_dc, "P(LOR)", Wx, Wy, visport); Wx += offx; }
 
       // Restrict back to LOR space. This won't give the original function because
-      // the rho_lor doesn't necessarily live in the range of R.
+      // the rho_lo doesn't necessarily live in the range of R.
       direction = "LOR -> HO @ LOR";
-      R.Mult(rho, rho_lor);
-      compute_mass(&fespace_lor, lor_mass, LOR_dc, "R(P(LOR))");
+      R.Mult(rho_im, rho_lo);
+      compute_mass(&fespace_lo, lor_mass, LOR_dc, "R(P(LOR))");
       if (vis) { visualize(LOR_dc, "R(P(LOR))", Wx, Wy, visport); }
 
-      rho_lor_prev -= rho_lor;
+      rho_lo_prev -= rho_lo;
       cout.precision(12);
-      cout << "|LOR - R(P(LOR))|_∞ = " << rho_lor_prev.Normlinf() << endl;
+      cout << "|LOR - R(P(LOR))|_∞ = " << rho_lo_prev.Normlinf() << endl;
+      if (abs(rho_lo_prev.Normlinf()-1.11022302463e-15) < 1e-15) {
+         cout << "SK: LOR reconstruction is Good!\n";
+      }
    }
 
    // LOR* to HO* dual fields
    if (!use_pointwise_transfer)
    {
-      M_lor.Mult(rho_lor, M_rho_lor);
-      R.MultTranspose(M_rho_lor, M_rho);
-      cout << "LOR -> HO dual field: " << abs(M_rho.Sum() - M_rho_lor.Sum()) << '\n';
+      M_lo.Mult(rho_lo, M_rho_lo);
+      R.MultTranspose(M_rho_lo, M_rho);
+      cout << "LOR -> HO dual field: " << abs(M_rho.Sum() - M_rho_lo.Sum()) << '\n';
    }
 
    delete gt;
-   delete fec;
-   delete fec_lor;
+   delete fec_im;
+   delete fec_lo;
 
    return 0;
 }
