@@ -45,6 +45,7 @@ int main(int argc, char *argv[])
    int order_ho = 3;
    int order_im = 3;
    int lref = order_im+1; // 4
+   int href = lref;
    int order_lo = 0;
    bool vis = true;
    bool useH1 = false;
@@ -95,7 +96,8 @@ int main(int argc, char *argv[])
    Mesh mesh_lo = Mesh::MakeRefined(mesh_im, lref, BasisType::GaussLobatto);
 
    // high-order mesh
-   Mesh mesh_hi(mesh_lo);
+   // Mesh mesh_hi(mesh_lo);
+   Mesh mesh_hi = Mesh::MakeRefined(mesh_im, href, BasisType::GaussLobatto);
 
    // ======================================================
    // Create spaces
@@ -123,6 +125,10 @@ int main(int argc, char *argv[])
    VisItDataCollection dc_hi("HO", &mesh_hi);
    dc_hi.RegisterField("density", &rho_hi);   
 
+   // ======================================================
+   // Create BilinearForms
+   // ======================================================
+
    BilinearForm M_lo(&fespace_lo);
    M_lo.AddDomainIntegrator(new MassIntegrator);
    M_lo.Assemble();
@@ -138,107 +144,133 @@ int main(int argc, char *argv[])
    M_hi.Assemble();
    M_hi.Finalize();
 
-   // HO projections
-   direction = "HO -> LOR @ HO";
-   FunctionCoefficient RHO(RHO_exact);
+   // ======================================================
+   // Defind GridTransfers
+   // ======================================================
 
-   rho_im.ProjectCoefficient(RHO);
-   rho_im.SetTrueVector();
-   rho_im.SetFromTrueVector();
+   std::cout<<"SK: Defind GridTransfers"<<std::endl;
 
-   real_t mass_im = compute_mass(&fespace_im, -1.0, dc_im, "HO       ");
-   if (vis) { visualize(dc_im, "HO", Wx, Wy, visport); Wx += offx; }
-
-   GridTransfer *gt;
+   GridTransfer *gt1 = nullptr;
+   GridTransfer *gt2 = nullptr;
    if (use_pointwise_transfer)
    {
-      gt = new InterpolationGridTransfer(fespace_im, fespace_lo);
+      gt1 = new InterpolationGridTransfer(fespace_im, fespace_lo);
+      gt2 = new InterpolationGridTransfer(fespace_hi, fespace_im);
    }
    else
    {
-      gt = new L2ProjectionGridTransfer(fespace_im, fespace_lo); // (dom_fes_, ran_fes_)
+      gt1 = new L2ProjectionGridTransfer(fespace_im, fespace_lo); // (dom_fes_, ran_fes_)
+      gt2 = new L2ProjectionGridTransfer(fespace_im, fespace_hi);
    }
 
    // Configure element assembly for device acceleration
-   gt->UseEA(use_ea);
+   gt1->UseEA(use_ea);
+   gt2->UseEA(use_ea);
 
-   const Operator &R = gt->ForwardOperator(); // Restriction
+   const Operator &R1 = gt1->ForwardOperator(); // Restriction
+   const Operator &R2 = gt2->ForwardOperator(); // Restriction
 
-   // HO->LOR restriction
-   direction = "HO -> LOR @ LOR";
+   const Operator &P1 = gt1->BackwardOperator(); // Prolongation
+   const Operator &P2 = gt2->BackwardOperator(); // Prolongation
 
-   R.Mult(rho_im, rho_lo);
-  
-   compute_mass(&fespace_lo, mass_im, dc_lo, "R(HO)    ");
-   if (vis) { visualize(dc_lo, "R(HO)", Wx, Wy, visport); Wx += offx; }
+   // ======================================================
+   // Compute GridFunctions
+   // ======================================================
 
-   if (gt->SupportsBackwardsOperator()) // 1
-   {
-      const Operator &P = gt->BackwardOperator(); // Prolongation
-      // LOR->HO prolongation
-      direction = "HO -> LOR @ HO";
-      GridFunction rho_prev = rho_im;
-      P.Mult(rho_lo, rho_im);
-      compute_mass(&fespace_im, mass_im, dc_im, "P(R(HO)) ");
-      if (vis) { visualize(dc_im, "P(R(HO))", Wx, Wy, visport); Wx = 0; Wy += offy; }
+   std::cout<<"SK: LO projection"<<std::endl;
 
-      rho_prev -= rho_im;
-      cout.precision(12);
-      cout << "|HO - P(R(HO))|_∞   = " << rho_prev.Normlinf() << endl;
-   }
+   // STEP1:LO projection
+   FunctionCoefficient RHO(RHO_exact);
 
-   // HO* to LOR* dual fields
-   LinearForm M_rho(&fespace_im), M_rho_lo(&fespace_lo);
-   if (!use_pointwise_transfer && gt->SupportsBackwardsOperator())
-   {
-      const Operator &P = gt->BackwardOperator();
-      M_im.Mult(rho_im, M_rho);
-      P.MultTranspose(M_rho, M_rho_lo);
-      cout << "HO -> LOR dual field: " << abs(M_rho.Sum()-M_rho_lo.Sum()) << "\n\n";
-   }
-
-   // LOR projections
-   direction = "LOR -> HO @ LOR";
    rho_lo.ProjectCoefficient(RHO);
-   GridFunction rho_lo_prev = rho_lo;
-   real_t lor_mass = compute_mass(&fespace_lo, -1.0, dc_lo, "LOR      ");
-   if (vis) { visualize(dc_lo, "LOR", Wx, Wy, visport); Wx += offx; }
+   rho_lo.SetTrueVector();
+   rho_lo.SetFromTrueVector();
 
-   if (gt->SupportsBackwardsOperator())
-   {
-      const Operator &P = gt->BackwardOperator();
-      // Prolongate to HO space
-      direction = "LOR -> HO @ HO";
-      P.Mult(rho_lo, rho_im);
-      compute_mass(&fespace_im, lor_mass, dc_im, "P(LOR)   ");
-      if (vis) { visualize(dc_im, "P(LOR)", Wx, Wy, visport); Wx += offx; }
+   std::cout<<"SK: LO compute mass"<<std::endl;
 
-      // Restrict back to LOR space. This won't give the original function because
-      // the rho_lo doesn't necessarily live in the range of R.
-      direction = "LOR -> HO @ LOR";
-      R.Mult(rho_im, rho_lo);
-      compute_mass(&fespace_lo, lor_mass, dc_lo, "R(P(LOR))");
-      if (vis) { visualize(dc_lo, "R(P(LOR))", Wx, Wy, visport); }
+   real_t mass_lo = compute_mass(&fespace_lo, -1.0, dc_lo, "LO       ");
+   if (vis) { visualize(dc_lo, "LO", Wx, Wy, visport); Wx += offx; }
 
-      rho_lo_prev -= rho_lo;
-      cout.precision(12);
-      cout << "|LOR - R(P(LOR))|_∞ = " << rho_lo_prev.Normlinf() << endl;
-      if (abs(rho_lo_prev.Normlinf()-1.11022302463e-15) < 1e-15) {
-         cout << "SK: LOR reconstruction is Good!\n";
-      }
-   }
 
-   // LOR* to HO* dual fields
-   if (!use_pointwise_transfer)
-   {
-      M_lo.Mult(rho_lo, M_rho_lo);
-      R.MultTranspose(M_rho_lo, M_rho);
-      cout << "LOR -> HO dual field: " << abs(M_rho.Sum() - M_rho_lo.Sum()) << '\n';
-   }
+   // STEP2: LO->IM Prolongation
+   direction = "LO -> IM @ IM";
+   P1.Mult(rho_lo, rho_im); // rho_im = P1 * rho
 
-   delete gt;
-   delete fec_im;
-   delete fec_lo;
+   // P1.Mult(rho_lo, rho_im); // rho_im = P1 * rho_lo
+   // real_t mass_im = compute_mass(&fespace_im, -1.0, dc_im, "P(R(HO)) ");
+  
+   // compute_mass(&fespace_lo, mass_im, dc_lo, "R(HO)    ");
+   // if (vis) { visualize(dc_lo, "R(HO)", Wx, Wy, visport); Wx += offx; }
+
+   // if (gt1->SupportsBackwardsOperator()) // 1
+   // {
+   //    const Operator &P1 = gt1->BackwardOperator(); // Prolongation
+   //    // LOR->HO prolongation
+   //    direction = "HO -> LOR @ HO";
+   //    GridFunction rho_prev = rho_im;
+   //    P1.Mult(rho_lo, rho_im); // rho_im = P1 * rho_lo
+   //    compute_mass(&fespace_im, mass_im, dc_im, "P(R(HO)) ");
+   //    if (vis) { visualize(dc_im, "P(R(HO))", Wx, Wy, visport); Wx = 0; Wy += offy; }
+
+   //    rho_prev -= rho_im;
+   //    cout.precision(12);
+   //    cout << "|HO - P(R(HO))|_∞   = " << rho_prev.Normlinf() << endl;
+   // }
+
+   // // HO* to LOR* dual fields
+   // LinearForm M_rho(&fespace_im), M_rho_lo(&fespace_lo);
+   // if (!use_pointwise_transfer && gt1->SupportsBackwardsOperator())
+   // {
+   //    const Operator &P1 = gt1->BackwardOperator();
+   //    M_im.Mult(rho_im, M_rho);
+   //    P1.MultTranspose(M_rho, M_rho_lo);
+   //    cout << "HO -> LOR dual field: " << abs(M_rho.Sum()-M_rho_lo.Sum()) << "\n\n";
+   // }
+
+   // // LOR projections
+   // direction = "LOR -> HO @ LOR";
+   // rho_lo.ProjectCoefficient(RHO);
+   // GridFunction rho_lo_prev = rho_lo;
+   // real_t lor_mass = compute_mass(&fespace_lo, -1.0, dc_lo, "LOR      ");
+   // if (vis) { visualize(dc_lo, "LOR", Wx, Wy, visport); Wx += offx; }
+
+   // if (gt1->SupportsBackwardsOperator())
+   // {
+   //    const Operator &P1 = gt1->BackwardOperator();
+   //    // Prolongate to HO space
+   //    direction = "LOR -> HO @ HO";
+   //    P1.Mult(rho_lo, rho_im);
+   //    compute_mass(&fespace_im, lor_mass, dc_im, "P(LOR)   ");
+   //    if (vis) { visualize(dc_im, "P(LOR)", Wx, Wy, visport); Wx += offx; }
+
+   //    // Restrict back to LOR space. This won't give the original function because
+   //    // the rho_lo doesn't necessarily live in the range of R.
+   //    direction = "LOR -> HO @ LOR";
+   //    R1.Mult(rho_im, rho_lo);
+   //    compute_mass(&fespace_lo, lor_mass, dc_lo, "R(P(LOR))");
+   //    if (vis) { visualize(dc_lo, "R(P(LOR))", Wx, Wy, visport); }
+
+   //    rho_lo_prev -= rho_lo;
+   //    cout.precision(12);
+   //    cout << "|LOR - R(P(LOR))|_∞ = " << rho_lo_prev.Normlinf() << endl;
+   //    if (abs(rho_lo_prev.Normlinf()-1.11022302463e-15) < 1e-15) {
+   //       cout << "SK: LOR reconstruction is Good!\n";
+   //    }
+   // }
+
+   // // LOR* to HO* dual fields
+   // if (!use_pointwise_transfer)
+   // {
+   //    M_lo.Mult(rho_lo, M_rho_lo);
+   //    R1.MultTranspose(M_rho_lo, M_rho);
+   //    cout << "LOR -> HO dual field: " << abs(M_rho.Sum() - M_rho_lo.Sum()) << '\n';
+   // }
+
+   // delete gt1;
+   // delete gt2;
+   // delete fec_lo;
+   // delete fec_im;
+   // delete fec_hi;
 
    return 0;
 }
