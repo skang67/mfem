@@ -210,13 +210,13 @@ int main(int argc, char *argv[])
 
    P1.Mult(rho_lo, rho_im); // rho_im = P1 * rho
 
-   real_t mass_im = compute_mass(&fespace_im, -1.0, dc_im, "P1(LO) ");
+   real_t mass_im = compute_mass(&fespace_im, -1.0, dc_im, "IM=P1(LO) ");
    if (vis) { visualize(dc_im, "IM=P1(LO)", Wx, Wy, visport); Wx += offx; }
 
    // STEP3: Prolongation 2 (IM->HO)
 
    P2.Mult(rho_im, rho_hi); // rho_hi = P2 * rho_im
-   real_t mass_hi = compute_mass(&fespace_hi, -1.0, dc_hi, "P2(IM) ");
+   real_t mass_hi = compute_mass(&fespace_hi, -1.0, dc_hi, "HO=P2(IM) ");
    if (vis) { visualize(dc_hi, "HO=P2(IM)", Wx, Wy, visport); Wx += offx; }
 
    // ======================================================
@@ -226,9 +226,9 @@ int main(int argc, char *argv[])
 
    GridFunction rho_error = rho_hi;
    rho_error -= rho_ex;
-   real_t error = rho_error.Normlinf();
    cout.precision(12);
-   cout << "|HO - EX|_∞   = " << error << endl;
+   cout << "|HO - EX|_∞     = " << rho_error.Normlinf() << endl;
+   cout << "|HO - EX|_{L^2} = " << rho_error.Norml2() << endl;
 
    delete gt1;
    delete gt2;
