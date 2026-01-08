@@ -167,11 +167,11 @@ int main(int argc, char *argv[])
    gt1->UseEA(use_ea);
    gt2->UseEA(use_ea);
 
-   const Operator &R1 = gt1->ForwardOperator(); // Restriction
-   const Operator &R2 = gt2->ForwardOperator(); // Restriction
+   const Operator &P1 = gt1->BackwardOperator();   // Prolongation 1 (LO->IM)
+   const Operator &P2 = gt2->ForwardOperator();    // Prolongation 2 (IM->HO)
 
-   const Operator &P1 = gt1->BackwardOperator(); // Prolongation
-   const Operator &P2 = gt2->BackwardOperator(); // Prolongation
+   const Operator &R1 = gt1->ForwardOperator();    // Restriction 1 (IM->LO)
+   const Operator &R2 = gt2->BackwardOperator();   // Restriction 2 (HO->IM)
 
    // ======================================================
    // Compute GridFunctions
@@ -179,28 +179,30 @@ int main(int argc, char *argv[])
 
    std::cout<<"SK: LO projection"<<std::endl;
 
-   // STEP1:LO projection
-   FunctionCoefficient RHO(RHO_exact);
+   // STEP1: LO projection
 
+   FunctionCoefficient RHO(RHO_exact);
    rho_lo.ProjectCoefficient(RHO);
    rho_lo.SetTrueVector();
    rho_lo.SetFromTrueVector();
 
    std::cout<<"SK: LO compute mass"<<std::endl;
 
-   real_t mass_lo = compute_mass(&fespace_lo, -1.0, dc_lo, "LO       ");
+   real_t mass_lo = compute_mass(&fespace_lo, -1.0, dc_lo, "LO");
    if (vis) { visualize(dc_lo, "LO", Wx, Wy, visport); Wx += offx; }
 
+   // STEP2: Prolongation 1 (LO->IM)
 
-   // STEP2: LO->IM Prolongation
-   direction = "LO -> IM @ IM";
    P1.Mult(rho_lo, rho_im); // rho_im = P1 * rho
 
-   // P1.Mult(rho_lo, rho_im); // rho_im = P1 * rho_lo
-   // real_t mass_im = compute_mass(&fespace_im, -1.0, dc_im, "P(R(HO)) ");
-  
-   // compute_mass(&fespace_lo, mass_im, dc_lo, "R(HO)    ");
-   // if (vis) { visualize(dc_lo, "R(HO)", Wx, Wy, visport); Wx += offx; }
+   real_t mass_im = compute_mass(&fespace_im, -1.0, dc_im, "P1(LO) ");
+   if (vis) { visualize(dc_im, "IM=P1(LO)", Wx, Wy, visport); Wx += offx; }
+
+   // STEP3: Prolongation 2 (IM->HO)
+
+   P2.Mult(rho_im, rho_hi); // rho_hi = P2 * rho_im
+   real_t mass_hi = compute_mass(&fespace_hi, -1.0, dc_hi, "P2(IM) ");
+   if (vis) { visualize(dc_hi, "HO=P2(IM)", Wx, Wy, visport); Wx += offx; }
 
    // if (gt1->SupportsBackwardsOperator()) // 1
    // {
