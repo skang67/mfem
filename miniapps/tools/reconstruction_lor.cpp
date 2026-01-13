@@ -54,14 +54,17 @@ int main(int argc, char *argv[])
    const char *device_config = "cpu";
    bool use_ea       = false;
 
+   int refinement_levels = 0;
+
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Mesh file to use.");
    args.AddOption(&problem, "-p", "--problem",
                   "Problem type (see the RHO_exact function).");
-   args.AddOption(&order_im, "-o", "--order",
-                  "Finite element order (polynomial degree) or -1 for"
-                  " isoparametric space.");
+   args.AddOption(&order_im, "-o", "--order_im",
+                  "Finite element order (polynomial degree) for intermediate space.");
+   args.AddOption(&refinement_levels, "-r", "--refine",
+                  "Number of times to refine the mesh uniformly.");                  
    args.AddOption(&lref, "-lref", "--lor-ref-level", "LOR refinement level.");
    args.AddOption(&order_lo, "-lo", "--lor-order",
                   "LOR space order (polynomial degree, zero by default).");
@@ -90,6 +93,10 @@ int main(int argc, char *argv[])
    const int num_x = 2;
    const int num_y = 2;
    Mesh mesh_im = Mesh::MakeCartesian2D(num_x, num_y, Element::QUADRILATERAL, false, 1.0, 1.0 ); // sx = sy =1
+   for (int i = 0; i < refinement_levels; i++)
+   { mesh_im.UniformRefinement(); }
+   mesh_im.EnsureNCMesh();
+
    int dim = mesh_im.Dimension();
 
    // low-order refined mesh
