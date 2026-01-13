@@ -60,8 +60,10 @@ int main(int argc, char *argv[])
                   "Mesh file to use.");
    args.AddOption(&problem, "-p", "--problem",
                   "Problem type (see the RHO_exact function).");
-   args.AddOption(&order_im, "-o", "--order_im",
+   args.AddOption(&order_im, "-io", "--order_im",
                   "Finite element order (polynomial degree) for intermediate space.");
+   args.AddOption(&order_ho, "-ho", "--order_ho",
+                  "Finite element order (polynomial degree) for high-order space.");                  
    args.AddOption(&refinement_levels, "-r", "--refine",
                   "Number of times to refine the mesh uniformly.");                  
    args.AddOption(&lref, "-lref", "--lor-ref-level", "LOR refinement level.");
@@ -99,7 +101,7 @@ int main(int argc, char *argv[])
    int dim = mesh_im.Dimension();
 
    // low-order refined mesh
-   Mesh mesh_lo = Mesh::MakeRefined(mesh_im, lref, BasisType::GaussLobatto);
+   Mesh mesh_lo = Mesh::MakeRefined(mesh_im, lref, BasisType::ClosedUniform);
 
    // ======================================================
    // Create spaces
