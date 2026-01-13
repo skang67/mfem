@@ -45,7 +45,6 @@ int main(int argc, char *argv[])
    int order_ho = 3;
    int order_im = 3;
    int lref = order_im+1; // 4
-   int href = lref;
    int order_lo = 0;
    bool vis = true;
    bool useH1 = false;
@@ -102,10 +101,6 @@ int main(int argc, char *argv[])
    // low-order refined mesh
    Mesh mesh_lo = Mesh::MakeRefined(mesh_im, lref, BasisType::GaussLobatto);
 
-   // high-order mesh
-   // Mesh mesh_hi(mesh_lo);
-   Mesh mesh_hi = Mesh::MakeRefined(mesh_im, href, BasisType::GaussLobatto);
-
    // ======================================================
    // Create spaces
    // ======================================================
@@ -125,7 +120,7 @@ int main(int argc, char *argv[])
 
    FiniteElementSpace fespace_lo(&mesh_lo, fec_lo);
    FiniteElementSpace fespace_im(&mesh_im, fec_im);
-   FiniteElementSpace fespace_hi(&mesh_hi, fec_hi);
+   FiniteElementSpace fespace_hi(&mesh_lo, fec_hi);
 
    GridFunction rho_lo(&fespace_lo);
    GridFunction rho_im(&fespace_im);
@@ -137,9 +132,9 @@ int main(int argc, char *argv[])
    dc_lo.RegisterField("density", &rho_lo);   
    VisItDataCollection dc_im("IM", &mesh_im);
    dc_im.RegisterField("density", &rho_im);
-   VisItDataCollection dc_hi("HO", &mesh_hi);
+   VisItDataCollection dc_hi("HO", &mesh_lo);
    dc_hi.RegisterField("density", &rho_hi);
-   VisItDataCollection dc_ex("EX", &mesh_hi);
+   VisItDataCollection dc_ex("EX", &mesh_lo);
    dc_ex.RegisterField("density", &rho_ex);
 
    // ======================================================
