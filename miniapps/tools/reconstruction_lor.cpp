@@ -93,9 +93,12 @@ int main(int argc, char *argv[])
    // intermediate mesh
    const int num_x = 2;
    const int num_y = 2;
+   real_t element_size = 1.0 / std::max(num_x, num_y);
    Mesh mesh_im = Mesh::MakeCartesian2D(num_x, num_y, Element::QUADRILATERAL, false, 1.0, 1.0 ); // sx = sy =1
-   for (int i = 0; i < refinement_levels; i++)
-   { mesh_im.UniformRefinement(); }
+   for (int i = 0; i < refinement_levels; i++) {
+      mesh_im.UniformRefinement();
+      element_size /= 2.0;
+   }
    mesh_im.EnsureNCMesh();
 
    int dim = mesh_im.Dimension();
@@ -118,6 +121,7 @@ int main(int argc, char *argv[])
    space = "L2";
    fec_lo = new L2_FECollection(order_lo, dim);
    fec_im = new L2_FECollection(order_im, dim);
+   // fec_im = new H1_FECollection(order_im, dim);
    fec_hi = new L2_FECollection(order_ho, dim);
 
    FiniteElementSpace fespace_lo(&mesh_lo, fec_lo);
@@ -127,7 +131,7 @@ int main(int argc, char *argv[])
    GridFunction rho_lo(&fespace_lo);
    GridFunction rho_im(&fespace_im);
    GridFunction rho_hi(&fespace_hi);
-   GridFunction rho_ex(&fespace_hi);
+   GridFunction rho_hi_exact(&fespace_hi);
 
    // Data collections for vis/analysis
    VisItDataCollection dc_lo("LO", &mesh_lo);
@@ -137,7 +141,7 @@ int main(int argc, char *argv[])
    VisItDataCollection dc_hi("HO", &mesh_lo);
    dc_hi.RegisterField("density", &rho_hi);
    VisItDataCollection dc_ex("EX", &mesh_lo);
-   dc_ex.RegisterField("density", &rho_ex);
+   dc_ex.RegisterField("density", &rho_hi_exact);
 
    // ======================================================
    // Create BilinearForms
@@ -200,9 +204,9 @@ int main(int argc, char *argv[])
    rho_lo.SetTrueVector();
    rho_lo.SetFromTrueVector();
 
-   rho_ex.ProjectCoefficient(RHO);
-   rho_ex.SetTrueVector();
-   rho_ex.SetFromTrueVector();
+   rho_hi_exact.ProjectCoefficient(RHO);
+   rho_hi_exact.SetTrueVector();
+   rho_hi_exact.SetFromTrueVector();
 
    real_t mass_ex = compute_mass(&fespace_hi, -1.0, dc_ex, "EX");
    if (vis) { visualize(dc_ex, "EX", Wx, Wy, visport); Wx += offx; }
@@ -228,12 +232,13 @@ int main(int argc, char *argv[])
    // ======================================================   
    // Compute error with respect to exact solution
 
-   GridFunction rho_error = rho_hi;
-   rho_error -= rho_ex;
    cout.precision(12);
-   cout << "|HO - EX|_∞     = " << rho_error.Normlinf() << endl;
-   cout << "|HO - EX|_{L^2} = " << rho_error.Norml2() << endl;
+   cout << "h ="<<element_size<<", |IM - EX|_{L^2} = " << rho_im.ComputeL2Error(RHO) << endl;
+   cout << "h ="<<element_size<<", |HO - EX|_{L^2} = " << rho_hi.ComputeL2Error(RHO) << endl;
 
+   // ======================================================
+   // Free memory
+   // ======================================================
    delete gt1;
    delete gt2;
    delete fec_lo;
